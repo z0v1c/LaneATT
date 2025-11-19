@@ -1,3 +1,6 @@
+
+
+#define _HAS_STD_BYTE 0
 #include <torch/extension.h>
 #include <ATen/ATen.h>
 
@@ -168,24 +171,25 @@ std::vector<at::Tensor> nms_cuda_forward(
   CHECK_CONTIGUOUS(idx);
   CHECK_CONTIGUOUS(mask);
 
-  AT_DISPATCH_FLOATING_TYPES(boxes.type(), "nms_cuda_forward", ([&] {
+  AT_DISPATCH_FLOATING_TYPES(boxes.scalar_type(), "nms_cuda_forward", [&] {
     nms_kernel<<<blocks, threads>>>(boxes_num,
-                                    (scalar_t)nms_overlap_thresh,
-                                    boxes.data<scalar_t>(),
-                                    idx.data<int64_t>(),
-                                    mask.data<int64_t>());
-  }));
+                                   static_cast<scalar_t>(nms_overlap_thresh),
+                                   boxes.data_ptr<scalar_t>(),
+                                   idx.data_ptr<int64_t>(),
+                                   mask.data_ptr<int64_t>());
+  });
+
 
   auto keep = at::empty({boxes_num}, longOptions);
   auto parent_object_index = at::empty({boxes_num}, longOptions);
   auto num_to_keep = at::empty({}, longOptions);
 
   nms_collect<<<1, 1>>>(boxes_num, col_blocks, top_k,
-                        idx.data<int64_t>(),
-                        mask.data<int64_t>(),
-                        keep.data<int64_t>(),
-                        parent_object_index.data<int64_t>(),
-                        num_to_keep.data<int64_t>());
+                        idx.data_ptr<int64_t>(),
+                        mask.data_ptr<int64_t>(),
+                        keep.data_ptr<int64_t>(),
+                        parent_object_index.data_ptr<int64_t>(),
+                        num_to_keep.data_ptr<int64_t>());
 
 
   return {keep,num_to_keep,parent_object_index};

@@ -1,6 +1,7 @@
 import pickle
 import random
 import logging
+import time
 
 import cv2
 import torch
@@ -85,12 +86,29 @@ class Runner:
             dataloader = self.get_test_dataloader()
         test_parameters = self.cfg.get_test_parameters()
         predictions = []
+        fps_list = []  # Track FPS for each frame
         self.exp.eval_start_callback(self.cfg)
         with torch.no_grad():
             for idx, (images, _, _) in enumerate(tqdm(dataloader)):
+                # Synchronize GPU before timing
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                start_time = time.time()
+                
                 images = images.to(self.device)
                 output = model(images, **test_parameters)
                 prediction = model.decode(output, as_lanes=True)
+                
+                # Synchronize GPU after inference
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                end_time = time.time()
+                
+                # Calculate FPS for this frame/batch
+                inference_time = end_time - start_time
+                batch_fps = images.shape[0] / inference_time  # FPS = batch_size / time
+                fps_list.extend([batch_fps] * images.shape[0])  # Assign same FPS to all images in batch
+                
                 predictions.extend(prediction)
                 if self.view:
                     img = (images[0].cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
@@ -103,6 +121,10 @@ class Runner:
         if save_predictions:
             with open('predictions.pkl', 'wb') as handle:
                 pickle.dump(predictions, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            # Save FPS data
+            with open('fps_data.pkl', 'wb') as handle:
+                pickle.dump(fps_list, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            self.logger.info('Saved predictions and FPS data. Average FPS: %.2f', np.mean(fps_list))
         self.exp.eval_end_callback(dataloader.dataset.dataset, predictions, epoch)
 
     def get_train_dataloader(self):
